@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__.'/includes/db.php';
+require_once __DIR__.'/db.php';
 
 // Fetch lists for selects
 $courses  = $conn->query("SELECT course_id, course_name FROM courses ORDER BY course_name ASC");
@@ -65,7 +65,7 @@ if (isset($_GET['sid'], $_GET['cid'])) {
 <head>
   <meta charset="utf-8">
   <title>Enrollments</title>
-  <link rel="stylesheet" href="assets/styles.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <div class="container">

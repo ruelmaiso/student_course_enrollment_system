@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__.'/includes/db.php';
+require_once __DIR__.'/db.php';
 function back(){ header("Location: enrollments.php"); exit; }
 
 if ($_SERVER['REQUEST_METHOD']==='POST') {

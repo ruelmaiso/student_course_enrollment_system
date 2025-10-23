@@ -1,8 +1,15 @@
 <?php
-require_once __DIR__.'/includes/db.php';
-
-// Load students
+require_once __DIR__.'/db.php';// Load students
 $students = $conn->query("SELECT student_id, name, age, email, address, allowance FROM students ORDER BY student_id ASC");
+
+// Load allowance logs for display
+$allowance_logs = $conn->query("
+    SELECT al.*, s.name as student_name 
+    FROM allowance_logs al 
+    JOIN students s ON al.student_id = s.student_id 
+    ORDER BY al.changed_at DESC 
+    LIMIT 10
+");C");
 
 // Edit mode (optional)
 $edit = null;
@@ -20,7 +27,7 @@ if (isset($_GET['edit'])) {
 <head>
   <meta charset="utf-8">
   <title>Students</title>
-  <link rel="stylesheet" href="assets/styles.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <div class="container">
@@ -55,11 +62,10 @@ if (isset($_GET['edit'])) {
             </div>
             <div class="full">
               <label>Address</label>
-              <input class="input" name="address" value="<?php echo htmlspecialchars($edit['address'] ?? '', ENT_QUOTES); ?>">
-            </div>
-            <div>
+              <input class="input" name="address" value="<?php echo htmlspecialchars($edit['            <div>
               <label>Allowance</label>
-              <input class="input" type="number" step="0.01" name="allowance" value="<?php echo htmlspecialchars($edit['allowance'] ?? '', ENT_QUOTES); ?>">
+              <input class="input" type="number" step="0.01" min="0" name="allowance" value="<?php echo htmlspecialchars($edit['allowance'] ?? '', ENT_QUOTES); ?>">
+            </div>t['allowance'] ?? '', ENT_QUOTES); ?>">
             </div>
           </div>
           <div style="margin-top:12px; display:flex; gap:8px;">
