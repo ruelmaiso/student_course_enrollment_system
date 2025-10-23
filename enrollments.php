@@ -1,12 +1,41 @@
 <?php
-require_once __DIR__.'/includes/db.php';
+require_once __DIR__.'/db.php';
 
-// Fetch lists for selects
-$courses  = $conn->query("SELECT course_id, course_name FROM courses ORDER BY course_name ASC");
+// Get search term and pagination
+$search_term = trim($_GET['search'] ?? '');
+$page = max(1, (int)($_GET['page'] ?? 1));
+$per_page = 7; // Fixed to 7 records per page
+$offset = ($page - 1) * $per_page;
 
-// Get all students not currently enrolled (for the dropdown)
+// Build search conditions
+$search_conditions = '';
+$search_params = [];
+if (!empty($search_term)) {
+    $search_conditions = "WHERE s.name LIKE ? OR c.course_name LIKE ?";
+    $search_params = ["%$search_term%", "%$search_term%"];
+}
+
+// Get total count for pagination
+$count_sql = "
+    SELECT COUNT(*) as total 
+    FROM enrollments e
+    JOIN students s ON s.student_id = e.student_id
+    JOIN courses c ON c.course_id = e.course_id
+    $search_conditions
+";
+if (!empty($search_params)) {
+    $count_stmt = $conn->prepare($count_sql);
+    $count_stmt->bind_param("ss", $search_params[0], $search_params[1]);
+    $count_stmt->execute();
+    $total_records = $count_stmt->get_result()->fetch_assoc()['total'];
+    $count_stmt->close();
+} else {
+    $total_records = $conn->query($count_sql)->fetch_assoc()['total'];
+}
+
+// Load students (only those not already enrolled)
 $students_sql = "
-    SELECT s.student_id, s.name 
+    SELECT s.student_id, s.name, s.allowance
     FROM students s
     WHERE NOT EXISTS (
         SELECT 1 FROM enrollments e 
@@ -15,57 +44,50 @@ $students_sql = "
     ORDER BY s.name ASC";
 $students = $conn->query($students_sql);
 
-// If in edit mode, include the currently enrolled student in the list
-if (isset($_GET['sid'], $_GET['cid'])) {
-    $sid = (int)$_GET['sid'];
-    $edit_student_sql = "SELECT student_id, name FROM students WHERE student_id = ?";
-    $stmt = $conn->prepare($edit_student_sql);
-    $stmt->bind_param("i", $sid);
-    $stmt->execute();
-    $edit_student = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    
-    // Prepend the current student to the students list
-    if ($edit_student) {
-        $all_students = [];
-        $all_students[] = $edit_student;
-        while($s = $students->fetch_assoc()) {
-            $all_students[] = $s;
-        }
-        // Create a new result object with the combined data
-        $students = new ArrayObject($all_students);
-    }
-}
+// Load courses with fees
+$courses = $conn->query("SELECT course_id, course_name, course_fee FROM courses ORDER BY course_name ASC");
 
-// Load enrollments with joins
-$sql = "
+// Load enrollments with pagination
+$enrollments_sql = "
   SELECT e.student_id, e.course_id, e.enrollment_date,
-         s.name AS student_name, c.course_name
+         s.name AS student_name, s.allowance, c.course_name, c.course_fee
   FROM enrollments e
   JOIN students s ON s.student_id = e.student_id
-  JOIN courses   c ON c.course_id   = e.course_id
+  JOIN courses c ON c.course_id = e.course_id
+  $search_conditions
   ORDER BY s.name, c.course_name
+  LIMIT ? OFFSET ?
 ";
-$enrollments = $conn->query($sql);
+$enrollments_stmt = $conn->prepare($enrollments_sql);
+if (!empty($search_params)) {
+    $enrollments_stmt->bind_param("ssii", $search_params[0], $search_params[1], $per_page, $offset);
+} else {
+    $enrollments_stmt->bind_param("ii", $per_page, $offset);
+}
+$enrollments_stmt->execute();
+$enrollments = $enrollments_stmt->get_result();
+$enrollments_stmt->close();
 
-// Optional edit mode (identified by composite key)
+// Edit mode
 $edit = null;
-if (isset($_GET['sid'], $_GET['cid'])) {
-    $sid = (int)$_GET['sid'];
-    $cid = (int)$_GET['cid'];
+if (isset($_GET['edit'])) {
+    $student_id = (int)$_GET['student_id'];
+    $course_id = (int)$_GET['course_id'];
     $stmt = $conn->prepare("SELECT student_id, course_id, enrollment_date FROM enrollments WHERE student_id=? AND course_id=?");
-    $stmt->bind_param("ii", $sid, $cid);
+    $stmt->bind_param("ii", $student_id, $course_id);
     $stmt->execute();
     $edit = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 }
+
+$total_pages = max(1, ceil($total_records / $per_page));
 ?>
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <title>Enrollments</title>
-  <link rel="stylesheet" href="assets/styles.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <div class="container">
@@ -74,57 +96,78 @@ if (isset($_GET['sid'], $_GET['cid'])) {
     <a href="index.php">Home</a>
     <a href="students.php">Students</a>
     <a href="courses.php">Courses</a>
+    <a href="payments.php">Payments</a>
   </div>
 
   <div class="row">
     <div class="col">
       <div class="card">
-        <h2><?php echo $edit ? 'Edit Enrollment Date' : 'Add Enrollment'; ?></h2>
+        <h2><?php echo $edit ? 'Edit Enrollment' : 'Add Enrollment'; ?></h2>
         <form method="post" action="enrollments_actions.php">
           <input type="hidden" name="action" value="<?php echo $edit ? 'update' : 'create'; ?>">
+          <?php if ($edit): ?>
+            <input type="hidden" name="student_id" value="<?php echo (int)$edit['student_id']; ?>">
+            <input type="hidden" name="course_id" value="<?php echo (int)$edit['course_id']; ?>">
+          <?php endif; ?>
           <div class="grid">
             <div>
               <label>Student</label>
-              <select class="select" name="student_id" <?php echo $edit ? 'readonly disabled' : 'required'; ?>>
-                <option value="">-- choose --</option>
-                <?php if ($students) foreach($students as $s): ?>
-                  <option value="<?php echo (int)$s['student_id']; ?>"
-                    <?php echo $edit && (int)$edit['student_id']===(int)$s['student_id'] ? 'selected' : ''; ?>>
-                    <?php echo htmlspecialchars($s['name']); ?>
-                  </option>
-                <?php endforeach; ?>
-              </select>
-              <?php if ($edit): ?>
-                <input type="hidden" name="student_id" value="<?php echo (int)$edit['student_id']; ?>">
-              <?php endif; ?>
-            </div>
-
-            <div>
-              <label>Course</label>
-              <select class="select" name="course_id" <?php echo $edit ? 'readonly disabled' : 'required'; ?>>
-                <option value="">-- choose --</option>
-                <?php if ($courses) while($c = $courses->fetch_assoc()): ?>
-                  <option value="<?php echo (int)$c['course_id']; ?>"
-                    <?php echo $edit && (int)$edit['course_id']===(int)$c['course_id'] ? 'selected' : ''; ?>>
-                    <?php echo htmlspecialchars($c['course_name']); ?>
+              <select class="select" name="student_id" required onchange="updateStudentInfo()">
+                <option value="">-- choose student --</option>
+                <?php while ($student = $students->fetch_assoc()): ?>
+                  <option value="<?php echo (int)$student['student_id']; ?>" 
+                          data-allowance="<?php echo $student['allowance']; ?>"
+                          <?php echo $edit && $edit['student_id'] == $student['student_id'] ? 'selected' : ''; ?>>
+                    <?php echo htmlspecialchars($student['name']); ?> (Allowance: $<?php echo number_format($student['allowance'], 2); ?>)
                   </option>
                 <?php endwhile; ?>
               </select>
-              <?php if ($edit): ?>
-                <input type="hidden" name="course_id" value="<?php echo (int)$edit['course_id']; ?>">
-              <?php endif; ?>
             </div>
+            <div>
+              <label>Course</label>
+              <select class="select" name="course_id" required onchange="updateCourseInfo()">
+                <option value="">-- choose course --</option>
+                <?php 
+                $courses->data_seek(0); // Reset cursor
+                while ($course = $courses->fetch_assoc()): 
+                ?>
+                  <option value="<?php echo (int)$course['course_id']; ?>" 
+                          data-fee="<?php echo $course['course_fee']; ?>"
+                          <?php echo $edit && $edit['course_id'] == $course['course_id'] ? 'selected' : ''; ?>>
+                    <?php echo htmlspecialchars($course['course_name']); ?> (Fee: $<?php echo number_format($course['course_fee'], 2); ?>)
+                  </option>
+                <?php endwhile; ?>
+              </select>
+            </div>
+          </div>
 
-            <div class="full">
-              <label>Enrollment Date</label>
-              <input class="input" type="date" name="enrollment_date" required
-                     value="<?php echo htmlspecialchars($edit['enrollment_date'] ?? '', ENT_QUOTES); ?>">
+          <!-- Payment Information Section -->
+          <div class="full" id="paymentInfo" style="display: none;">
+            <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0;">
+              <h4 style="margin: 0 0 12px; color: #2c3e50;">Payment Information</h4>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                <div>
+                  <label style="font-size: 14px; font-weight: 600;">Student Allowance</label>
+                  <div id="studentAllowance" style="font-size: 18px; font-weight: bold; color: #27ae60;">$0.00</div>
+                </div>
+                <div>
+                  <label style="font-size: 14px; font-weight: 600;">Course Fee</label>
+                  <div id="courseFee" style="font-size: 18px; font-weight: bold; color: #3498db;">$0.00</div>
+                </div>
+              </div>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0;">
+                <label style="font-size: 14px; font-weight: 600;">Payment Required</label>
+                <div id="paymentRequired" style="font-size: 20px; font-weight: bold; color: #e74c3c;">$0.00</div>
+                <small style="color: #7f8c8d;">If student has sufficient allowance, it will be deducted automatically</small>
+              </div>
             </div>
           </div>
 
           <div style="margin-top:12px; display:flex; gap:8px;">
-            <button class="btn" type="submit"><?php echo $edit ? 'Update Date' : 'Enroll'; ?></button>
-            <?php if ($edit): ?><a class="btn secondary" href="enrollments.php">Cancel</a><?php endif; ?>
+            <button class="btn" type="submit"><?php echo $edit ? 'Update' : 'Create'; ?></button>
+            <?php if ($edit): ?>
+              <a class="btn secondary" href="enrollments.php">Cancel</a>
+            <?php endif; ?>
           </div>
         </form>
       </div>
@@ -132,12 +175,25 @@ if (isset($_GET['sid'], $_GET['cid'])) {
 
     <div class="col">
       <div class="card">
-        <h2>All Enrollments</h2>
+        <h2>All Enrollments (<?php echo $total_records; ?> total)</h2>
+
+        <!-- Simple Search -->
+        <div class="search-box">
+          <form method="get" style="display: flex; gap: 8px; flex: 1;">
+            <input class="input" type="text" name="search" placeholder="Search enrollments..." 
+                   value="<?php echo htmlspecialchars($search_term); ?>" style="flex: 1;">
+            <button class="btn" type="submit">Search</button>
+            <?php if (!empty($search_term)): ?>
+              <a class="btn secondary" href="enrollments.php">Clear</a>
+            <?php endif; ?>
+          </form>
+        </div>
+
         <?php if ($enrollments && $enrollments->num_rows): ?>
           <table>
             <thead>
               <tr>
-                <th>Student</th><th>Course</th><th>Date</th><th>Actions</th>
+                <th>Student</th><th>Course</th><th>Fee</th><th>Allowance</th><th>Status</th><th>Date</th><th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -145,23 +201,86 @@ if (isset($_GET['sid'], $_GET['cid'])) {
               <tr>
                 <td><?php echo htmlspecialchars($row['student_name']); ?></td>
                 <td><?php echo htmlspecialchars($row['course_name']); ?></td>
-                <td><span class="badge"><?php echo htmlspecialchars($row['enrollment_date']); ?></span></td>
+                <td>$<?php echo number_format($row['course_fee'], 2); ?></td>
+                <td>$<?php echo number_format($row['allowance'], 2); ?></td>
+                <td>
+                  <?php if ($row['allowance'] >= $row['course_fee']): ?>
+                    <span class="badge success">Sufficient</span>
+                  <?php else: ?>
+                    <span class="badge warning">Insufficient</span>
+                  <?php endif; ?>
+                </td>
+                <td><?php echo date('M j, Y', strtotime($row['enrollment_date'])); ?></td>
                 <td class="actions">
-                  <a class="btn" href="?sid=<?php echo (int)$row['student_id']; ?>&cid=<?php echo (int)$row['course_id']; ?>">Edit</a>
-                  <a class="btn danger"
-                     href="enrollments_actions.php?action=delete&sid=<?php echo (int)$row['student_id']; ?>&cid=<?php echo (int)$row['course_id']; ?>"
-                     onclick="return confirm('Remove this enrollment?');">Delete</a>
+                  <a class="btn" href="?edit=1&student_id=<?php echo (int)$row['student_id']; ?>&course_id=<?php echo (int)$row['course_id']; ?>">Edit</a>
+                  <a class="btn danger" href="enrollments_actions.php?action=delete&student_id=<?php echo (int)$row['student_id']; ?>&course_id=<?php echo (int)$row['course_id']; ?>"
+                     onclick="return confirm('Delete this enrollment?');">Delete</a>
                 </td>
               </tr>
             <?php endwhile; ?>
             </tbody>
           </table>
+
+          <!-- Simple Pagination -->
+          <div class="pagination">
+            <?php if ($page > 1): ?>
+              <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1])); ?>">← Previous</a>
+            <?php endif; ?>
+            
+            <span>Page <?php echo $page; ?> of <?php echo $total_pages; ?></span>
+            
+            <?php if ($page < $total_pages): ?>
+              <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>">Next →</a>
+            <?php endif; ?>
+          </div>
         <?php else: ?>
-          <div class="empty">No enrollments yet.</div>
+          <div class="empty">
+            <?php if (!empty($search_term)): ?>
+              No enrollments found matching "<?php echo htmlspecialchars($search_term); ?>"
+            <?php else: ?>
+              No enrollments yet.
+            <?php endif; ?>
+          </div>
         <?php endif; ?>
       </div>
     </div>
   </div>
 </div>
+
+<script>
+function updateStudentInfo() {
+  updatePaymentInfo();
+}
+
+function updateCourseInfo() {
+  updatePaymentInfo();
+}
+
+function updatePaymentInfo() {
+  const studentSelect = document.querySelector('select[name="student_id"]');
+  const courseSelect = document.querySelector('select[name="course_id"]');
+  const paymentInfo = document.getElementById('paymentInfo');
+  
+  if (studentSelect.value && courseSelect.value) {
+    const studentAllowance = parseFloat(studentSelect.options[studentSelect.selectedIndex].getAttribute('data-allowance')) || 0;
+    const courseFee = parseFloat(courseSelect.options[courseSelect.selectedIndex].getAttribute('data-fee')) || 0;
+    
+    document.getElementById('studentAllowance').textContent = '$' + studentAllowance.toFixed(2);
+    document.getElementById('courseFee').textContent = '$' + courseFee.toFixed(2);
+    
+    const paymentRequired = Math.max(0, courseFee - studentAllowance);
+    document.getElementById('paymentRequired').textContent = '$' + paymentRequired.toFixed(2);
+    
+    paymentInfo.style.display = 'block';
+  } else {
+    paymentInfo.style.display = 'none';
+  }
+}
+
+// Initialize payment info if editing
+document.addEventListener('DOMContentLoaded', function() {
+  updatePaymentInfo();
+});
+</script>
 </body>
 </html>
