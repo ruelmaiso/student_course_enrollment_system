@@ -6,7 +6,7 @@ $courses = $conn->query("SELECT course_id, course_name, course_fee FROM courses 
 $edit = null;
 if (isset($_GET['edit'])) {
     $id = (int)$_GET['edit'];
-    $stmt = $conn->prepare("SELECT course_id, course_name FROM courses WHERE course_id=?");
+    $stmt = $conn->prepare("SELECT course_id, course_name, course_fee FROM courses WHERE course_id=?");
     $stmt->bind_param("i", $id);
     $stmt->execute();
     $edit = $stmt->get_result()->fetch_assoc();
@@ -27,6 +27,8 @@ if (isset($_GET['edit'])) {
     <a href="index.php">Home</a>
     <a href="students.php">Students</a>
     <a href="enrollments.php">Enrollments</a>
+    <a href="payments.php">Payments</a>
+    <a href="search.php">Search</a>
   </div>
 
   <div class="row">
@@ -37,19 +39,22 @@ if (isset($_GET['edit'])) {
           <input type="hidden" name="action" value="<?php echo $edit ? 'update' : 'create'; ?>">
           <?php if ($edit): ?>
             <input type="hidden" name="course_id" value="<?php echo (int)$edit['course_id']; ?>">
-          <?php             <div>
+          <?php endif; ?>
+          <div class="grid">
+            <div>
               <label>Course Name</label>
               <input class="input" required name="course_name" value="<?php echo htmlspecialchars($edit['course_name'] ?? '', ENT_QUOTES); ?>">
             </div>
             <div>
               <label>Course Fee</label>
               <input class="input" type="number" step="0.01" min="0" name="course_fee" value="<?php echo htmlspecialchars($edit['course_fee'] ?? '', ENT_QUOTES); ?>">
-            </div>?? '', ENT_QUOTES); ?>">
             </div>
           </div>
           <div style="margin-top:12px; display:flex; gap:8px;">
             <button class="btn" type="submit"><?php echo $edit ? 'Update' : 'Create'; ?></button>
-            <?php if ($edit): ?><a class="btn secondary" href="courses.php">Cancel</a><?php endif; ?>
+            <?php if ($edit): ?>
+              <a class="btn secondary" href="courses.php">Cancel</a>
+            <?php endif; ?>
           </div>
         </form>
       </div>
@@ -62,9 +67,11 @@ if (isset($_GET['edit'])) {
           <table>
             <thead><tr><th>ID</th><th>Name</th><th>Fee</th><th>Actions</th></tr></thead>
             <tbody>
-            <?php while                <td><?php echo (int)$row['course_id']; ?></td>
+            <?php while ($row = $courses->fetch_assoc()): ?>
+              <tr>
+                <td><?php echo (int)$row['course_id']; ?></td>
                 <td><?php echo htmlspecialchars($row['course_name']); ?></td>
-                <td>$<?php echo number_format($row['course_fee'], 2); ?></td>td><?php echo htmlspecialchars($row['course_name']); ?></td>
+                <td>$<?php echo number_format($row['course_fee'], 2); ?></td>
                 <td class="actions">
                   <a class="btn" href="?edit=<?php echo (int)$row['course_id']; ?>">Edit</a>
                   <a class="btn danger" href="courses_actions.php?action=delete&id=<?php echo (int)$row['course_id']; ?>"
