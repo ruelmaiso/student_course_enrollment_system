@@ -4,7 +4,7 @@ require_once __DIR__.'/db.php';
 // Get search term and pagination
 $search_term = trim($_GET['search'] ?? '');
 $page = max(1, (int)($_GET['page'] ?? 1));
-$per_page = max(5, min(100, (int)($_GET['per_page'] ?? 10)));
+$per_page = 7; // Fixed to 7 records per page
 $offset = ($page - 1) * $per_page;
 
 // Build search conditions
@@ -91,7 +91,6 @@ $total_pages = max(1, ceil($total_records / $per_page));
   <meta charset="utf-8">
   <title>Payments</title>
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body>
 <div class="container">
@@ -104,18 +103,14 @@ $total_pages = max(1, ceil($total_records / $per_page));
   </div>
 
   <!-- Payment Statistics -->
-  <div class="row">
-    <div class="col">
-      <div class="card" style="text-align:center;">
-        <h2>Total Payments</h2>
-        <p style="font-size:32px;font-weight:bold;color:var(--ok);">$<?php echo number_format($total_payments, 2); ?></p>
-      </div>
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-number">$<?php echo number_format($total_payments, 2); ?></div>
+      <div class="stat-label">Total Payments</div>
     </div>
-    <div class="col">
-      <div class="card" style="text-align:center;">
-        <h2>This Month</h2>
-        <p style="font-size:32px;font-weight:bold;color:var(--accent);">$<?php echo number_format($monthly_payments, 2); ?></p>
-      </div>
+    <div class="stat-card">
+      <div class="stat-number">$<?php echo number_format($monthly_payments, 2); ?></div>
+      <div class="stat-label">This Month</div>
     </div>
   </div>
 
@@ -131,7 +126,7 @@ $total_pages = max(1, ceil($total_records / $per_page));
           <div class="grid">
             <div>
               <label>Student</label>
-              <select class="select" name="student_id" required onchange="updateCourseOptions()">
+              <select class="select" name="student_id" required>
                 <option value="">-- choose student --</option>
                 <?php 
                 $students->data_seek(0); // Reset cursor
@@ -146,14 +141,13 @@ $total_pages = max(1, ceil($total_records / $per_page));
             </div>
             <div>
               <label>Course</label>
-              <select class="select" name="course_id" required onchange="updateAmount()">
+              <select class="select" name="course_id" required>
                 <option value="">-- choose course --</option>
                 <?php 
                 $courses->data_seek(0); // Reset cursor
                 while ($course = $courses->fetch_assoc()): 
                 ?>
                   <option value="<?php echo (int)$course['course_id']; ?>" 
-                          data-fee="<?php echo $course['course_fee']; ?>"
                           <?php echo $edit && $edit['course_id'] == $course['course_id'] ? 'selected' : ''; ?>>
                     <?php echo htmlspecialchars($course['course_name']); ?> (Fee: $<?php echo number_format($course['course_fee'], 2); ?>)
                   </option>
@@ -183,34 +177,18 @@ $total_pages = max(1, ceil($total_records / $per_page));
 
     <div class="col">
       <div class="card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-          <h2>All Payments</h2>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <span class="badge"><?php echo $total_records; ?> total</span>
-            <span class="badge">Page <?php echo $page; ?> of <?php echo $total_pages; ?></span>
-          </div>
-        </div>
+        <h2>All Payments (<?php echo $total_records; ?> total)</h2>
 
-        <!-- Search and Pagination Controls -->
-        <div style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;">
-          <form method="get" style="display: flex; gap: 8px; flex: 1; min-width: 300px;">
+        <!-- Simple Search -->
+        <div class="search-box">
+          <form method="get" style="display: flex; gap: 8px; flex: 1;">
             <input class="input" type="text" name="search" placeholder="Search payments..." 
                    value="<?php echo htmlspecialchars($search_term); ?>" style="flex: 1;">
-            <button class="btn" type="submit">
-              <i class="fas fa-search"></i>
-            </button>
+            <button class="btn" type="submit">Search</button>
             <?php if (!empty($search_term)): ?>
-              <a class="btn secondary" href="payments.php">
-                <i class="fas fa-times"></i>
-              </a>
+              <a class="btn secondary" href="payments.php">Clear</a>
             <?php endif; ?>
           </form>
-          
-          <select class="select" onchange="changePerPage(this.value)" style="width: auto;">
-            <option value="10" <?php echo $per_page == 10 ? 'selected' : ''; ?>>10 per page</option>
-            <option value="25" <?php echo $per_page == 25 ? 'selected' : ''; ?>>25 per page</option>
-            <option value="50" <?php echo $per_page == 50 ? 'selected' : ''; ?>>50 per page</option>
-          </select>
         </div>
 
         <?php if ($payments && $payments->num_rows): ?>
@@ -227,13 +205,6 @@ $total_pages = max(1, ceil($total_records / $per_page));
                 <td><?php echo htmlspecialchars($row['course_name']); ?></td>
                 <td>
                   <span class="payment-amount">$<?php echo number_format($row['amount'], 2); ?></span>
-                  <?php if ($row['amount'] < $row['course_fee']): ?>
-                    <span class="badge warning">Partial</span>
-                  <?php elseif ($row['amount'] > $row['course_fee']): ?>
-                    <span class="badge success">Overpaid</span>
-                  <?php else: ?>
-                    <span class="badge success">Complete</span>
-                  <?php endif; ?>
                 </td>
                 <td>
                   <?php if ($row['amount'] < $row['course_fee']): ?>
@@ -255,34 +226,17 @@ $total_pages = max(1, ceil($total_records / $per_page));
             </tbody>
           </table>
 
-          <!-- Pagination -->
-          <div style="margin-top: 20px; display: flex; justify-content: center;">
-            <?php
-            if ($total_pages > 1) {
-                echo '<div class="pagination">';
-                
-                if ($page > 1) {
-                    $prev_params = array_merge($_GET, ['page' => $page - 1]);
-                    echo '<a href="?' . http_build_query($prev_params) . '" class="pagination-link">&laquo; Previous</a>';
-                }
-                
-                $start_page = max(1, $page - 2);
-                $end_page = min($total_pages, $page + 2);
-                
-                for ($i = $start_page; $i <= $end_page; $i++) {
-                    $page_params = array_merge($_GET, ['page' => $i]);
-                    $class = $i == $page ? 'pagination-link active' : 'pagination-link';
-                    echo '<a href="?' . http_build_query($page_params) . '" class="' . $class . '">' . $i . '</a>';
-                }
-                
-                if ($page < $total_pages) {
-                    $next_params = array_merge($_GET, ['page' => $page + 1]);
-                    echo '<a href="?' . http_build_query($next_params) . '" class="pagination-link">Next &raquo;</a>';
-                }
-                
-                echo '</div>';
-            }
-            ?>
+          <!-- Simple Pagination -->
+          <div class="pagination">
+            <?php if ($page > 1): ?>
+              <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1])); ?>">← Previous</a>
+            <?php endif; ?>
+            
+            <span>Page <?php echo $page; ?> of <?php echo $total_pages; ?></span>
+            
+            <?php if ($page < $total_pages): ?>
+              <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>">Next →</a>
+            <?php endif; ?>
           </div>
         <?php else: ?>
           <div class="empty">
@@ -297,22 +251,5 @@ $total_pages = max(1, ceil($total_records / $per_page));
     </div>
   </div>
 </div>
-
-<script>
-function updateCourseOptions() {
-  // This function can be enhanced to filter courses based on student
-}
-
-function updateAmount() {
-  // This function can be enhanced to auto-fill amount based on course fee
-}
-
-function changePerPage(perPage) {
-  const url = new URL(window.location);
-  url.searchParams.set('per_page', perPage);
-  url.searchParams.set('page', '1');
-  window.location.href = url.toString();
-}
-</script>
 </body>
 </html>
