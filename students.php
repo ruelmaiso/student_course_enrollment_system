@@ -1,10 +1,11 @@
 <?php
 require_once __DIR__.'/db.php';
-require_once __DIR__.'/pagination.php';
 
-// Get pagination parameters
-$pagination = getPaginationParams();
-$search_term = getSearchTerm();
+// Get search term
+$search_term = trim($_GET['search'] ?? '');
+$page = max(1, (int)($_GET['page'] ?? 1));
+$per_page = max(5, min(100, (int)($_GET['per_page'] ?? 10)));
+$offset = ($page - 1) * $per_page;
 
 // Build search conditions
 $search_conditions = '';
@@ -16,21 +17,23 @@ if (!empty($search_term)) {
 
 // Get total count for pagination
 $count_sql = "SELECT COUNT(*) as total FROM students $search_conditions";
-$count_stmt = $conn->prepare($count_sql);
 if (!empty($search_params)) {
-    $count_stmt->bind_param("sss", ...$search_params);
+    $count_stmt = $conn->prepare($count_sql);
+    $count_stmt->bind_param("sss", $search_params[0], $search_params[1], $search_params[2]);
+    $count_stmt->execute();
+    $total_records = $count_stmt->get_result()->fetch_assoc()['total'];
+    $count_stmt->close();
+} else {
+    $total_records = $conn->query($count_sql)->fetch_assoc()['total'];
 }
-$count_stmt->execute();
-$total_records = $count_stmt->get_result()->fetch_assoc()['total'];
-$count_stmt->close();
 
 // Load students with pagination
 $students_sql = "SELECT student_id, name, age, email, address, allowance FROM students $search_conditions ORDER BY student_id ASC LIMIT ? OFFSET ?";
 $students_stmt = $conn->prepare($students_sql);
 if (!empty($search_params)) {
-    $students_stmt->bind_param("sssii", ...$search_params, $pagination['per_page'], $pagination['offset']);
+    $students_stmt->bind_param("sssii", $search_params[0], $search_params[1], $search_params[2], $per_page, $offset);
 } else {
-    $students_stmt->bind_param("ii", $pagination['per_page'], $pagination['offset']);
+    $students_stmt->bind_param("ii", $per_page, $offset);
 }
 $students_stmt->execute();
 $students = $students_stmt->get_result();
@@ -45,7 +48,7 @@ $allowance_logs = $conn->query("
     LIMIT 10
 ");
 
-// Edit mode (optional)
+// Edit mode
 $edit = null;
 if (isset($_GET['edit'])) {
     $id = (int)$_GET['edit'];
@@ -56,8 +59,7 @@ if (isset($_GET['edit'])) {
     $stmt->close();
 }
 
-$total_pages = getTotalPages($total_records, $pagination['per_page']);
-$pagination_links = generatePaginationLinks($pagination['page'], $total_pages, 'students.php', addSearchToParams([], $search_term));
+$total_pages = max(1, ceil($total_records / $per_page));
 ?>
 <!doctype html>
 <html lang="en">
@@ -75,14 +77,13 @@ $pagination_links = generatePaginationLinks($pagination['page'], $total_pages, '
     <a href="courses.php">Courses</a>
     <a href="enrollments.php">Enrollments</a>
     <a href="payments.php">Payments</a>
-    <a href="search.php">Search</a>
   </div>
 
   <div class="row">
     <div class="col">
       <div class="card">
         <h2><?php echo $edit ? 'Edit Student' : 'Add Student'; ?></h2>
-        <form method="post" action="students_actions.php" id="studentForm">
+        <form method="post" action="students_actions.php">
           <input type="hidden" name="action" value="<?php echo $edit ? 'update' : 'create'; ?>">
           <?php if ($edit): ?>
             <input type="hidden" name="student_id" value="<?php echo (int)$edit['student_id']; ?>">
@@ -125,7 +126,7 @@ $pagination_links = generatePaginationLinks($pagination['page'], $total_pages, '
           <h2>All Students</h2>
           <div style="display: flex; gap: 8px; align-items: center;">
             <span class="badge"><?php echo $total_records; ?> total</span>
-            <span class="badge">Page <?php echo $pagination['page']; ?> of <?php echo $total_pages; ?></span>
+            <span class="badge">Page <?php echo $page; ?> of <?php echo $total_pages; ?></span>
           </div>
         </div>
 
@@ -145,9 +146,9 @@ $pagination_links = generatePaginationLinks($pagination['page'], $total_pages, '
           </form>
           
           <select class="select" onchange="changePerPage(this.value)" style="width: auto;">
-            <option value="10" <?php echo $pagination['per_page'] == 10 ? 'selected' : ''; ?>>10 per page</option>
-            <option value="25" <?php echo $pagination['per_page'] == 25 ? 'selected' : ''; ?>>25 per page</option>
-            <option value="50" <?php echo $pagination['per_page'] == 50 ? 'selected' : ''; ?>>50 per page</option>
+            <option value="10" <?php echo $per_page == 10 ? 'selected' : ''; ?>>10 per page</option>
+            <option value="25" <?php echo $per_page == 25 ? 'selected' : ''; ?>>25 per page</option>
+            <option value="50" <?php echo $per_page == 50 ? 'selected' : ''; ?>>50 per page</option>
           </select>
         </div>
 
@@ -183,7 +184,36 @@ $pagination_links = generatePaginationLinks($pagination['page'], $total_pages, '
 
           <!-- Pagination -->
           <div style="margin-top: 20px; display: flex; justify-content: center;">
-            <?php renderPagination($pagination_links); ?>
+            <?php
+            // Simple pagination
+            if ($total_pages > 1) {
+                echo '<div class="pagination">';
+                
+                // Previous page
+                if ($page > 1) {
+                    $prev_params = array_merge($_GET, ['page' => $page - 1]);
+                    echo '<a href="?' . http_build_query($prev_params) . '" class="pagination-link">&laquo; Previous</a>';
+                }
+                
+                // Page numbers
+                $start_page = max(1, $page - 2);
+                $end_page = min($total_pages, $page + 2);
+                
+                for ($i = $start_page; $i <= $end_page; $i++) {
+                    $page_params = array_merge($_GET, ['page' => $i]);
+                    $class = $i == $page ? 'pagination-link active' : 'pagination-link';
+                    echo '<a href="?' . http_build_query($page_params) . '" class="' . $class . '">' . $i . '</a>';
+                }
+                
+                // Next page
+                if ($page < $total_pages) {
+                    $next_params = array_merge($_GET, ['page' => $page + 1]);
+                    echo '<a href="?' . http_build_query($next_params) . '" class="pagination-link">Next &raquo;</a>';
+                }
+                
+                echo '</div>';
+            }
+            ?>
           </div>
         <?php else: ?>
           <div class="empty">

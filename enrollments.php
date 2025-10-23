@@ -1,6 +1,38 @@
 <?php
 require_once __DIR__.'/db.php';
 
+// Get search term and pagination
+$search_term = trim($_GET['search'] ?? '');
+$page = max(1, (int)($_GET['page'] ?? 1));
+$per_page = max(5, min(100, (int)($_GET['per_page'] ?? 10)));
+$offset = ($page - 1) * $per_page;
+
+// Build search conditions
+$search_conditions = '';
+$search_params = [];
+if (!empty($search_term)) {
+    $search_conditions = "WHERE s.name LIKE ? OR c.course_name LIKE ?";
+    $search_params = ["%$search_term%", "%$search_term%"];
+}
+
+// Get total count for pagination
+$count_sql = "
+    SELECT COUNT(*) as total 
+    FROM enrollments e
+    JOIN students s ON s.student_id = e.student_id
+    JOIN courses c ON c.course_id = e.course_id
+    $search_conditions
+";
+if (!empty($search_params)) {
+    $count_stmt = $conn->prepare($count_sql);
+    $count_stmt->bind_param("ss", $search_params[0], $search_params[1]);
+    $count_stmt->execute();
+    $total_records = $count_stmt->get_result()->fetch_assoc()['total'];
+    $count_stmt->close();
+} else {
+    $total_records = $conn->query($count_sql)->fetch_assoc()['total'];
+}
+
 // Load students (only those not already enrolled)
 $students_sql = "
     SELECT s.student_id, s.name, s.allowance
@@ -15,18 +47,28 @@ $students = $conn->query($students_sql);
 // Load courses with fees
 $courses = $conn->query("SELECT course_id, course_name, course_fee FROM courses ORDER BY course_name ASC");
 
-// Load enrollments with student and course names, and financial info
-$sql = "
+// Load enrollments with pagination
+$enrollments_sql = "
   SELECT e.student_id, e.course_id, e.enrollment_date,
          s.name AS student_name, s.allowance, c.course_name, c.course_fee
   FROM enrollments e
   JOIN students s ON s.student_id = e.student_id
-  JOIN courses   c ON c.course_id   = e.course_id
+  JOIN courses c ON c.course_id = e.course_id
+  $search_conditions
   ORDER BY s.name, c.course_name
+  LIMIT ? OFFSET ?
 ";
-$enrollments = $conn->query($sql);
+$enrollments_stmt = $conn->prepare($enrollments_sql);
+if (!empty($search_params)) {
+    $enrollments_stmt->bind_param("ssii", $search_params[0], $search_params[1], $per_page, $offset);
+} else {
+    $enrollments_stmt->bind_param("ii", $per_page, $offset);
+}
+$enrollments_stmt->execute();
+$enrollments = $enrollments_stmt->get_result();
+$enrollments_stmt->close();
 
-// Edit mode (optional)
+// Edit mode
 $edit = null;
 if (isset($_GET['edit'])) {
     $student_id = (int)$_GET['student_id'];
@@ -37,6 +79,8 @@ if (isset($_GET['edit'])) {
     $edit = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 }
+
+$total_pages = max(1, ceil($total_records / $per_page));
 ?>
 <!doctype html>
 <html lang="en">
@@ -54,14 +98,13 @@ if (isset($_GET['edit'])) {
     <a href="students.php">Students</a>
     <a href="courses.php">Courses</a>
     <a href="payments.php">Payments</a>
-    <a href="search.php">Search</a>
   </div>
 
   <div class="row">
     <div class="col">
       <div class="card">
         <h2><?php echo $edit ? 'Edit Enrollment' : 'Add Enrollment'; ?></h2>
-        <form method="post" action="enrollments_actions.php" id="enrollmentForm">
+        <form method="post" action="enrollments_actions.php">
           <input type="hidden" name="action" value="<?php echo $edit ? 'update' : 'create'; ?>">
           <?php if ($edit): ?>
             <input type="hidden" name="student_id" value="<?php echo (int)$edit['student_id']; ?>">
@@ -133,7 +176,36 @@ if (isset($_GET['edit'])) {
 
     <div class="col">
       <div class="card">
-        <h2>All Enrollments</h2>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <h2>All Enrollments</h2>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <span class="badge"><?php echo $total_records; ?> total</span>
+            <span class="badge">Page <?php echo $page; ?> of <?php echo $total_pages; ?></span>
+          </div>
+        </div>
+
+        <!-- Search and Pagination Controls -->
+        <div style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;">
+          <form method="get" style="display: flex; gap: 8px; flex: 1; min-width: 300px;">
+            <input class="input" type="text" name="search" placeholder="Search enrollments..." 
+                   value="<?php echo htmlspecialchars($search_term); ?>" style="flex: 1;">
+            <button class="btn" type="submit">
+              <i class="fas fa-search"></i>
+            </button>
+            <?php if (!empty($search_term)): ?>
+              <a class="btn secondary" href="enrollments.php">
+                <i class="fas fa-times"></i>
+              </a>
+            <?php endif; ?>
+          </form>
+          
+          <select class="select" onchange="changePerPage(this.value)" style="width: auto;">
+            <option value="10" <?php echo $per_page == 10 ? 'selected' : ''; ?>>10 per page</option>
+            <option value="25" <?php echo $per_page == 25 ? 'selected' : ''; ?>>25 per page</option>
+            <option value="50" <?php echo $per_page == 50 ? 'selected' : ''; ?>>50 per page</option>
+          </select>
+        </div>
+
         <?php if ($enrollments && $enrollments->num_rows): ?>
           <table>
             <thead>
@@ -165,16 +237,49 @@ if (isset($_GET['edit'])) {
             <?php endwhile; ?>
             </tbody>
           </table>
+
+          <!-- Pagination -->
+          <div style="margin-top: 20px; display: flex; justify-content: center;">
+            <?php
+            if ($total_pages > 1) {
+                echo '<div class="pagination">';
+                
+                if ($page > 1) {
+                    $prev_params = array_merge($_GET, ['page' => $page - 1]);
+                    echo '<a href="?' . http_build_query($prev_params) . '" class="pagination-link">&laquo; Previous</a>';
+                }
+                
+                $start_page = max(1, $page - 2);
+                $end_page = min($total_pages, $page + 2);
+                
+                for ($i = $start_page; $i <= $end_page; $i++) {
+                    $page_params = array_merge($_GET, ['page' => $i]);
+                    $class = $i == $page ? 'pagination-link active' : 'pagination-link';
+                    echo '<a href="?' . http_build_query($page_params) . '" class="' . $class . '">' . $i . '</a>';
+                }
+                
+                if ($page < $total_pages) {
+                    $next_params = array_merge($_GET, ['page' => $page + 1]);
+                    echo '<a href="?' . http_build_query($next_params) . '" class="pagination-link">Next &raquo;</a>';
+                }
+                
+                echo '</div>';
+            }
+            ?>
+          </div>
         <?php else: ?>
-          <div class="empty">No enrollments yet.</div>
+          <div class="empty">
+            <?php if (!empty($search_term)): ?>
+              No enrollments found matching "<?php echo htmlspecialchars($search_term); ?>"
+            <?php else: ?>
+              No enrollments yet.
+            <?php endif; ?>
+          </div>
         <?php endif; ?>
       </div>
     </div>
   </div>
 </div>
-
-<!-- Toast Container -->
-<div id="toastContainer" class="toast-container"></div>
 
 <script>
 function updateStudentInfo() {
@@ -206,23 +311,11 @@ function updatePaymentInfo() {
   }
 }
 
-function showToast(message, type = 'success') {
-  const toast = document.createElement('div');
-  toast.className = `toast toast-${type}`;
-  toast.textContent = message;
-  
-  document.getElementById('toastContainer').appendChild(toast);
-  
-  setTimeout(() => {
-    toast.classList.add('show');
-  }, 100);
-  
-  setTimeout(() => {
-    toast.classList.remove('show');
-    setTimeout(() => {
-      document.getElementById('toastContainer').removeChild(toast);
-    }, 300);
-  }, 3000);
+function changePerPage(perPage) {
+  const url = new URL(window.location);
+  url.searchParams.set('per_page', perPage);
+  url.searchParams.set('page', '1');
+  window.location.href = url.toString();
 }
 
 // Initialize payment info if editing
