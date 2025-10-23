@@ -4,7 +4,7 @@ $total_students = $conn->query("SELECT COUNT(*) AS cnt FROM students")->fetch_as
 $total_courses = $conn->query("SELECT COUNT(*) AS cnt FROM courses")->fetch_assoc()['cnt'] ?? 0;
 $total_enrollments = $conn->query("SELECT COUNT(*) AS cnt FROM enrollments")->fetch_assoc()['cnt'] ?? 0;
 $total_payments = $conn->query("SELECT SUM(amount) AS total FROM payments")->fetch_assoc()['total'] ?? 0;
-$total_allowance = $conn->query("SELECT SUM(allowance) AS total FROM students")->fetch_assoc()['total'] ?? 0;?? 0;
+$total_allowance = $conn->query("SELECT SUM(allowance) AS total FROM students")->fetch_assoc()['total'] ?? 0;
 
 // Students per course
 $sql = "
