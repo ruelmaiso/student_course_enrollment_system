@@ -1,10 +1,10 @@
 <?php
 require_once __DIR__.'/db.php';
 
-// Get search term
+// Get search term and pagination
 $search_term = trim($_GET['search'] ?? '');
 $page = max(1, (int)($_GET['page'] ?? 1));
-$per_page = max(5, min(100, (int)($_GET['per_page'] ?? 10)));
+$per_page = 7; // Fixed to 7 records per page
 $offset = ($page - 1) * $per_page;
 
 // Build search conditions
@@ -39,7 +39,7 @@ $students_stmt->execute();
 $students = $students_stmt->get_result();
 $students_stmt->close();
 
-// Load allowance logs for display (limited to recent)
+// Load allowance logs for display
 $allowance_logs = $conn->query("
     SELECT al.*, s.name as student_name 
     FROM allowance_logs al 
@@ -67,7 +67,6 @@ $total_pages = max(1, ceil($total_records / $per_page));
   <meta charset="utf-8">
   <title>Students</title>
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body>
 <div class="container">
@@ -122,34 +121,18 @@ $total_pages = max(1, ceil($total_records / $per_page));
 
     <div class="col">
       <div class="card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-          <h2>All Students</h2>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <span class="badge"><?php echo $total_records; ?> total</span>
-            <span class="badge">Page <?php echo $page; ?> of <?php echo $total_pages; ?></span>
-          </div>
-        </div>
+        <h2>All Students (<?php echo $total_records; ?> total)</h2>
 
-        <!-- Search and Pagination Controls -->
-        <div style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;">
-          <form method="get" style="display: flex; gap: 8px; flex: 1; min-width: 300px;">
+        <!-- Simple Search -->
+        <div class="search-box">
+          <form method="get" style="display: flex; gap: 8px; flex: 1;">
             <input class="input" type="text" name="search" placeholder="Search students..." 
                    value="<?php echo htmlspecialchars($search_term); ?>" style="flex: 1;">
-            <button class="btn" type="submit">
-              <i class="fas fa-search"></i>
-            </button>
+            <button class="btn" type="submit">Search</button>
             <?php if (!empty($search_term)): ?>
-              <a class="btn secondary" href="students.php">
-                <i class="fas fa-times"></i>
-              </a>
+              <a class="btn secondary" href="students.php">Clear</a>
             <?php endif; ?>
           </form>
-          
-          <select class="select" onchange="changePerPage(this.value)" style="width: auto;">
-            <option value="10" <?php echo $per_page == 10 ? 'selected' : ''; ?>>10 per page</option>
-            <option value="25" <?php echo $per_page == 25 ? 'selected' : ''; ?>>25 per page</option>
-            <option value="50" <?php echo $per_page == 50 ? 'selected' : ''; ?>>50 per page</option>
-          </select>
         </div>
 
         <?php if ($students && $students->num_rows): ?>
@@ -169,51 +152,30 @@ $total_pages = max(1, ceil($total_records / $per_page));
                 <td>
                   <span class="allowance-amount">$<?php echo number_format($row['allowance'], 2); ?></span>
                   <button class="btn-icon" onclick="showAllowanceLogs(<?php echo $row['student_id']; ?>, '<?php echo htmlspecialchars($row['name']); ?>')">
-                    <i class="fas fa-history"></i>
+                    📊
                   </button>
                 </td>
                 <td class="actions">
                   <a class="btn" href="?edit=<?php echo (int)$row['student_id']; ?>">Edit</a>
                   <a class="btn danger" href="students_actions.php?action=delete&id=<?php echo (int)$row['student_id']; ?>"
-                     onclick="return confirm('Delete this student? This may affect enrollments.');">Delete</a>
+                     onclick="return confirm('Delete this student?');">Delete</a>
                 </td>
               </tr>
             <?php endwhile; ?>
             </tbody>
           </table>
 
-          <!-- Pagination -->
-          <div style="margin-top: 20px; display: flex; justify-content: center;">
-            <?php
-            // Simple pagination
-            if ($total_pages > 1) {
-                echo '<div class="pagination">';
-                
-                // Previous page
-                if ($page > 1) {
-                    $prev_params = array_merge($_GET, ['page' => $page - 1]);
-                    echo '<a href="?' . http_build_query($prev_params) . '" class="pagination-link">&laquo; Previous</a>';
-                }
-                
-                // Page numbers
-                $start_page = max(1, $page - 2);
-                $end_page = min($total_pages, $page + 2);
-                
-                for ($i = $start_page; $i <= $end_page; $i++) {
-                    $page_params = array_merge($_GET, ['page' => $i]);
-                    $class = $i == $page ? 'pagination-link active' : 'pagination-link';
-                    echo '<a href="?' . http_build_query($page_params) . '" class="' . $class . '">' . $i . '</a>';
-                }
-                
-                // Next page
-                if ($page < $total_pages) {
-                    $next_params = array_merge($_GET, ['page' => $page + 1]);
-                    echo '<a href="?' . http_build_query($next_params) . '" class="pagination-link">Next &raquo;</a>';
-                }
-                
-                echo '</div>';
-            }
-            ?>
+          <!-- Simple Pagination -->
+          <div class="pagination">
+            <?php if ($page > 1): ?>
+              <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1])); ?>">← Previous</a>
+            <?php endif; ?>
+            
+            <span>Page <?php echo $page; ?> of <?php echo $total_pages; ?></span>
+            
+            <?php if ($page < $total_pages): ?>
+              <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>">Next →</a>
+            <?php endif; ?>
           </div>
         <?php else: ?>
           <div class="empty">
@@ -263,77 +225,47 @@ $total_pages = max(1, ceil($total_records / $per_page));
   </div>
 </div>
 
-<!-- Allowance Logs Modal -->
+<!-- Simple Modal -->
 <div id="allowanceModal" class="modal">
   <div class="modal-content">
     <div class="modal-header">
       <h3 id="modalTitle">Allowance History</h3>
-      <span class="close" onclick="closeModal('allowanceModal')">&times;</span>
+      <span class="close" onclick="closeModal()">&times;</span>
     </div>
     <div class="modal-body">
       <div id="allowanceLogsContent">
-        <!-- Content will be loaded here -->
+        <p>Loading...</p>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Toast Container -->
-<div id="toastContainer" class="toast-container"></div>
-
 <script>
 function showAllowanceLogs(studentId, studentName) {
   document.getElementById('modalTitle').textContent = 'Allowance History - ' + studentName;
+  document.getElementById('allowanceLogsContent').innerHTML = '<p>Loading...</p>';
+  document.getElementById('allowanceModal').style.display = 'block';
   
-  // Fetch allowance logs for specific student
+  // Simple fetch for allowance logs
   fetch('get_allowance_logs.php?student_id=' + studentId)
     .then(response => response.text())
     .then(data => {
       document.getElementById('allowanceLogsContent').innerHTML = data;
-      document.getElementById('allowanceModal').style.display = 'block';
     })
     .catch(error => {
-      showToast('Error loading allowance logs', 'error');
+      document.getElementById('allowanceLogsContent').innerHTML = '<p>Error loading data</p>';
     });
 }
 
-function closeModal(modalId) {
-  document.getElementById(modalId).style.display = 'none';
-}
-
-function showToast(message, type = 'success') {
-  const toast = document.createElement('div');
-  toast.className = `toast toast-${type}`;
-  toast.textContent = message;
-  
-  document.getElementById('toastContainer').appendChild(toast);
-  
-  setTimeout(() => {
-    toast.classList.add('show');
-  }, 100);
-  
-  setTimeout(() => {
-    toast.classList.remove('show');
-    setTimeout(() => {
-      document.getElementById('toastContainer').removeChild(toast);
-    }, 300);
-  }, 3000);
-}
-
-function changePerPage(perPage) {
-  const url = new URL(window.location);
-  url.searchParams.set('per_page', perPage);
-  url.searchParams.set('page', '1'); // Reset to first page
-  window.location.href = url.toString();
+function closeModal() {
+  document.getElementById('allowanceModal').style.display = 'none';
 }
 
 // Close modal when clicking outside
 window.onclick = function(event) {
-  const modals = document.getElementsByClassName('modal');
-  for (let modal of modals) {
-    if (event.target == modal) {
-      modal.style.display = 'none';
-    }
+  const modal = document.getElementById('allowanceModal');
+  if (event.target == modal) {
+    modal.style.display = 'none';
   }
 }
 </script>
